@@ -1,147 +1,370 @@
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  🐸  Froggy Tic-Tac-Toe — LLM-DRIVEN (the LLM actually plays, pushed hard)
+  ═══════════════════════════════════════════════════════════════════════════
+
+  Unlike the hybrid, the cloud LLM decides EVERY move here. We make it play well
+  using four prompt-engineering techniques:
+
+    1. STRATEGY PRIORITY LIST  — we hand it tic-tac-toe's perfect heuristic
+       (win → block → fork → center → corner → side) instead of hoping it knows.
+    2. STRUCTURED JSON OUTPUT  — it must answer as {"reasoning","move","trash_talk"}.
+    3. CHAIN-OF-THOUGHT        — the "reasoning" field makes it think before moving.
+    4. VALIDATE + RETRY LOOP   — illegal/garbled answer? feed back the error, re-ask
+                                 (up to 3x). Still failing? Honest error, no fake move.
+
+  NOTE: this needs the UPDATED api/move.js (the one that reads temperature/max_tokens
+  from the request). The old 24-token version would chop off the JSON.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Froggy Tic-Tac-Toe (Flask)</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Froggy Tic-Tac-Toe vs Blossom (LLM-driven)</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@600;700;800&display=swap');
-
-  :root {
-    --sky:#bfe4f1; --sky-top:#d4eef7; --frog:#97c97f; --frog-deep:#6fa85e;
-    --blush:#f6bcc8; --blush-deep:#ec96a9; --cream:#fffdf6; --ink:#51624f; --ink-soft:#7e8c7c;
-  }
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
   body {
-    margin: 0; font-family: 'Nunito', system-ui, sans-serif; color: var(--ink);
-    display: flex; align-items: center; justify-content: center; padding: 28px 16px;
-    background-color: #eef4ee;
-    background-image:
-      linear-gradient(45deg, #e4ece2 25%, transparent 25%, transparent 75%, #e4ece2 75%),
-      linear-gradient(45deg, #e4ece2 25%, transparent 25%, transparent 75%, #e4ece2 75%);
-    background-size: 38px 38px; background-position: 0 0, 19px 19px;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    background: #e8f4f8;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; margin: 0; padding: 24px 12px;
   }
-  .widget {
-    width: 100%; max-width: 360px; position: relative;
-    background: linear-gradient(170deg, var(--sky-top), var(--sky));
-    border-radius: 36px; padding: 22px 22px 26px;
-    box-shadow: 0 18px 40px rgba(95,130,120,0.28), inset 0 0 0 5px rgba(255,255,255,0.55);
+  .card {
+    background: #bfe3f0;
+    width: 380px; max-width: 100%;
+    padding: 26px 22px 22px;
+    border-radius: 28px;
+    box-shadow: 0 10px 30px rgba(95,122,85,0.25);
+    text-align: center;
   }
-  .scene { display: flex; justify-content: center; }
-  .scene svg { width: 118px; height: auto; animation: bob 3.6s ease-in-out infinite; transform-origin: bottom center; }
-  @keyframes bob { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-5px);} }
-
-  h1 {
-    font-family: 'Baloo 2','Comic Sans MS',system-ui,cursive; font-weight: 700;
-    font-size: 1.7rem; text-align: center; margin: 4px 0 0; color: var(--ink); letter-spacing: .5px;
+  .title { font-size: 21px; font-weight: 800; color: #5f7a55; margin-bottom: 2px; }
+  .subtitle { font-size: 13px; color: #7a9a6f; margin-bottom: 16px; }
+  #status {
+    font-size: 17px; color: #5f7a55; font-weight: 600;
+    min-height: 26px; margin-bottom: 14px;
   }
-  .badge-wrap { text-align: center; margin: 2px 0; }
-  .pybadge {
-    display: inline-block; background: rgba(255,255,255,.65); color: var(--frog-deep);
-    font-weight: 800; font-size: .72rem; letter-spacing: .4px; padding: 3px 11px; border-radius: 999px;
+  #grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 10px; margin-bottom: 4px;
   }
-
-  .players { display: flex; justify-content: center; gap: 10px; margin: 8px 0 4px; }
-  .chip {
-    display: flex; align-items: center; gap: 7px; background: rgba(255,255,255,.6);
-    border-radius: 999px; padding: 6px 14px 6px 10px; font-weight: 800; font-size: .95rem; color: var(--ink-soft);
-  }
-  .chip .mark { font-size: 1.25rem; line-height: 1; }
-  .chip .score { min-width: 1.2em; text-align: center; background: rgba(255,255,255,.8); border-radius: 999px; padding: 1px 8px; }
-  .chip.active { background: #fff; color: var(--ink); transform: translateY(-2px) scale(1.04); box-shadow: 0 6px 14px rgba(95,130,120,.22); }
-
-  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0 6px; }
-  .cellform { display: contents; }   /* lets the button sit directly in the grid */
-  .tile {
-    aspect-ratio: 1 / 1; width: 100%; border: none; border-radius: 20px; background: var(--cream);
-    box-shadow: 0 5px 12px rgba(95,130,120,.16), inset 0 -3px 0 rgba(0,0,0,.04);
-    font-size: 2.5rem; line-height: 1; cursor: pointer; font-family: 'Nunito', sans-serif;
+  .cell {
+    aspect-ratio: 1 / 1;
+    background: #fdf9f1; border: none; border-radius: 22px;
     display: flex; align-items: center; justify-content: center;
-    transition: transform .15s ease, background .2s ease;
+    font-size: 46px; cursor: pointer;
+    box-shadow: 0 4px 8px rgba(95,122,85,0.18);
+    transition: transform .12s, box-shadow .2s, opacity .2s;
   }
-  button.tile:hover { transform: translateY(-3px); background: #fff; }
-  button.tile:focus-visible { outline: 3px solid var(--frog-deep); outline-offset: 2px; }
-  div.tile { cursor: default; }
-  .tile .mark { display: inline-block; }
-  .tile.win { background: var(--blush); box-shadow: 0 0 0 3px #fff, 0 8px 18px rgba(236,150,169,.5); }
-
-  .status { text-align: center; font-weight: 800; font-size: 1.05rem; min-height: 1.5em; margin: 12px 0 14px; color: var(--ink); }
-  .reset {
-    display: block; margin: 0 auto; border: none; background: var(--blush-deep); color: #fff;
-    font-family: 'Baloo 2', system-ui, sans-serif; font-weight: 600; font-size: 1rem;
-    padding: 11px 28px; border-radius: 999px; cursor: pointer; box-shadow: 0 6px 14px rgba(236,150,169,.45);
-    transition: transform .15s ease, background .2s ease;
+  .cell:not(:disabled):hover { transform: scale(1.06); }
+  .cell:disabled { cursor: default; }
+  .cell:focus-visible { outline: 3px solid #5f7a55; outline-offset: 2px; }
+  .cell.frog   { background: #cdeccb; }
+  .cell.flower { background: #f7c8d8; }
+  .cell.win    { box-shadow: 0 0 0 4px #9fd17f; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.18)} }
+  #thinking {
+    height: 24px; margin: 10px 0 2px;
+    font-size: 14px; color: #5f7a55; font-weight: 600;
+    display: none; align-items: center; justify-content: center; gap: 8px;
   }
-  .reset:hover { background: #e5879b; transform: translateY(-2px); }
-
-  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  #thinking .dot { display:inline-block; animation: pulse 1.2s ease-in-out infinite; }
+  #error {
+    display: none; margin: 8px 0 0; padding: 10px 12px;
+    background: #ffe2e2; color: #a23b3b; border-radius: 14px;
+    font-size: 13px; font-weight: 600;
+  }
+  .controls { display: flex; gap: 10px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  button.action {
+    padding: 11px 22px; font-size: 15px; font-weight: 700;
+    color: #fff; background: #9fd17f; border: none; border-radius: 16px;
+    cursor: pointer; box-shadow: 0 4px 0 #7fb85f;
+  }
+  button.action:active { transform: translateY(2px); box-shadow: 0 2px 0 #7fb85f; }
+  button.retry { background: #6fb1d8; box-shadow: 0 4px 0 #4f91b8; display: none; }
+  button.retry:active { box-shadow: 0 2px 0 #4f91b8; }
+  .speech {
+    margin-top: 18px; background: #fdf9f1; border-radius: 16px;
+    padding: 14px 16px; text-align: left; width: 380px; max-width: 100%;
+  }
+  .speech .label { font-size: 12px; font-weight: 700; color: #7a9a6f; margin-bottom: 6px; }
+  #speech { font-size: 15px; color: #3d5c33; line-height: 1.45; min-height: 22px; font-style: italic; }
+  #reasoning { font-size: 12px; color: #8aa0b0; line-height: 1.4; margin-top: 8px; }
+  .endpoint { font-size: 11px; color: #8aa0b0; margin-top: 14px; text-align: center; max-width: 380px; }
+  @media (prefers-reduced-motion: reduce) {
+    .cell, button.action, #thinking .dot { transition: none; animation: none; }
+  }
 </style>
 </head>
 <body>
-  <main class="widget">
-    <div class="scene" aria-hidden="true">
-      <svg viewBox="0 0 120 104" xmlns="http://www.w3.org/2000/svg">
-        <ellipse cx="60" cy="92" rx="46" ry="11" fill="#cbe09c"/>
-        <path d="M60 92 L60 81" stroke="#b6cf86" stroke-width="3" stroke-linecap="round"/>
-        <path d="M60 14 C 56 6, 50 6, 50 12 C 50 16, 56 17, 60 14 Z" fill="#bfe07f"/>
-        <path d="M60 14 C 64 6, 70 6, 70 12 C 70 16, 64 17, 60 14 Z" fill="#a9d36a"/>
-        <circle cx="60" cy="15" r="2.6" fill="#f2cf76"/>
-        <ellipse cx="60" cy="58" rx="40" ry="33" fill="#97c97f"/>
-        <ellipse cx="60" cy="66" rx="26" ry="20" fill="#a9d68f"/>
-        <circle cx="42" cy="34" r="15" fill="#97c97f"/>
-        <circle cx="78" cy="34" r="15" fill="#97c97f"/>
-        <circle cx="42" cy="34" r="9.5" fill="#fffdf6"/>
-        <circle cx="78" cy="34" r="9.5" fill="#fffdf6"/>
-        <circle cx="44" cy="36" r="4.4" fill="#51624f"/>
-        <circle cx="80" cy="36" r="4.4" fill="#51624f"/>
-        <circle cx="45.6" cy="34.4" r="1.5" fill="#fff"/>
-        <circle cx="81.6" cy="34.4" r="1.5" fill="#fff"/>
-        <ellipse cx="38" cy="60" rx="7" ry="5" fill="#f6bcc8"/>
-        <ellipse cx="82" cy="60" rx="7" ry="5" fill="#f6bcc8"/>
-        <path d="M50 60 Q60 70 70 60" stroke="#51624f" stroke-width="2.6" fill="none" stroke-linecap="round"/>
-      </svg>
+
+  <div class="card">
+    <div class="title">🐸 Froggy Tic-Tac-Toe</div>
+    <div class="subtitle">You 🐸 &nbsp;vs&nbsp; Blossom 🌸 — she plans her own moves</div>
+
+    <div id="status">Your turn — tap a square 🐸</div>
+
+    <div id="grid"></div>
+
+    <div id="thinking"><span class="dot">🌸</span> Blossom is planning her move…</div>
+    <div id="error"></div>
+
+    <div class="controls">
+      <button class="action" id="newGameBtn">New Game 🍃</button>
+      <button class="action retry" id="retryBtn">Try again 🔁</button>
     </div>
+  </div>
 
-    <h1>Tic-Tac-Toe</h1>
-    <div class="badge-wrap"><span class="pybadge">🐍 Powered by Python · Flask</span></div>
+  <div class="speech">
+    <div class="label">🌸 Blossom says</div>
+    <div id="speech">Make your move, frog. I'm three steps ahead already.</div>
+    <div id="reasoning"></div>
+  </div>
 
-    <div class="players">
-      <div class="chip {% if g.current == FROG and not g.over %}active{% endif %}">
-        <span class="mark">🐸</span><span>Frog</span><span class="score">{{ scores[FROG] }}</span>
-      </div>
-      <div class="chip {% if g.current == BLOOM and not g.over %}active{% endif %}">
-        <span class="mark">🌸</span><span>Bloom</span><span class="score">{{ scores[BLOOM] }}</span>
-      </div>
-    </div>
+  <div class="endpoint" id="endpointLabel"></div>
 
-    <div class="board">
-      {% for i in range(9) %}
-        {% if g.cells[i] %}
-          <div class="tile {% if i in g.line %}win{% endif %}"><span class="mark">{{ g.cells[i] }}</span></div>
-        {% elif g.over %}
-          <div class="tile"></div>
-        {% else %}
-          <form class="cellform" action="{{ url_for('move', i=i) }}" method="post">
-            <button class="tile" type="submit" aria-label="Square {{ i + 1 }}"></button>
-          </form>
-        {% endif %}
-      {% endfor %}
-    </div>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════
+const ENDPOINT = "/api/move";   // our proxy → Groq cloud model
 
-    <p class="status">
-      {% if g.over and g.winner %}
-        {{ "Frog" if g.winner == FROG else "Bloom" }} wins! {{ g.winner }}
-      {% elif g.over %}
-        It's a draw 🌿
-      {% else %}
-        {{ "Frog" if g.current == FROG else "Bloom" }}'s turn {{ g.current }}
-      {% endif %}
-    </p>
+// The heart of "pushing the LLM further": a precise role, the perfect strategy
+// as an explicit priority list, and a strict structured-output contract.
+const MOVE_PROMPT =
+`You are an expert Tic-Tac-Toe player named Blossom. You play as O. The human plays as X.
 
-    <form action="{{ url_for('reset') }}" method="post">
-      <button class="reset" type="submit">New round</button>
-    </form>
-  </main>
+Squares are numbered 1-9 like a phone keypad:
+1 | 2 | 3
+4 | 5 | 6
+7 | 8 | 9
+
+You will be given the board and the list of EMPTY squares. Pick O's best move by
+applying this strategy in STRICT priority order — use the first rule that applies:
+1. WIN: if O already has two in a line and the third square is empty, take it and win.
+2. BLOCK: if X has two in a line and the third square is empty, take it to block X.
+3. FORK: take a square that gives O two separate winning threats at once.
+4. BLOCK FORK: if X could make such a double-threat next, take a square that stops it.
+5. CENTER: take square 5 if it is empty.
+6. OPPOSITE CORNER: if X is in a corner and the opposite corner is empty, take it.
+7. EMPTY CORNER: take any empty corner (1, 3, 7, 9).
+8. EMPTY SIDE: take any empty side (2, 4, 6, 8).
+
+Think it through briefly, then reply with ONLY this JSON object and nothing else:
+{"reasoning": "<which rule you used and why, one sentence>", "move": <an empty square number>, "trash_talk": "<one short, playful, cocky line, max 14 words>"}
+
+"move" MUST be one of the empty squares you were given. Output only the JSON.`;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GAME STATE
+// ═══════════════════════════════════════════════════════════════════════════
+const HUMAN = "🐸";
+const AI    = "🌸";
+const WIN_LINES = [
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6]
+];
+
+let board = Array(9).fill("");
+let locked = false;
+let gameOver = false;
+
+// ── DOM references ──────────────────────────────────────────────────────────
+const grid       = document.getElementById("grid");
+const statusEl    = document.getElementById("status");
+const thinkingEl  = document.getElementById("thinking");
+const errorEl     = document.getElementById("error");
+const speechEl    = document.getElementById("speech");
+const reasoningEl = document.getElementById("reasoning");
+const retryBtn    = document.getElementById("retryBtn");
+document.getElementById("endpointLabel").textContent =
+  "Moves: Llama 3.3 70B, prompt-engineered (win/block/center/corner) · via Groq";
+document.getElementById("newGameBtn").onclick = newGame;
+retryBtn.onclick = () => { retryBtn.style.display = "none"; hideError(); blossomTurn(); };
+
+// ── Build the 9 cells ─────────────────────────────────────────────────────────
+const cells = [];
+for (let i = 0; i < 9; i++) {
+  const b = document.createElement("button");
+  b.className = "cell";
+  b.setAttribute("aria-label", "square " + (i + 1));
+  b.onclick = () => humanMove(i);
+  cells.push(b);
+  grid.appendChild(b);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RENDER + WINNER CHECK
+// ═══════════════════════════════════════════════════════════════════════════
+function render(winLine) {
+  board.forEach((val, i) => {
+    const c = cells[i];
+    c.textContent = val;
+    c.classList.toggle("frog",   val === HUMAN);
+    c.classList.toggle("flower", val === AI);
+    c.classList.remove("win");
+    c.disabled = (val !== "") || locked || gameOver;
+  });
+  if (winLine) winLine.forEach(i => cells[i].classList.add("win"));
+}
+
+function winningLine() {
+  for (const line of WIN_LINES) {
+    const [a, b, c] = line;
+    if (board[a] && board[a] === board[b] && board[a] === board[c]) return line;
+  }
+  return board.every(Boolean) ? "draw" : null;
+}
+
+function endIfFinished() {
+  const result = winningLine();
+  if (!result) return false;
+  gameOver = true;
+  if (result === "draw") {
+    statusEl.textContent = "It's a tie! 🪷";
+    render();
+  } else {
+    const winner = board[result[0]];
+    statusEl.textContent = winner === HUMAN ? "You beat her! 🎉🐸" : "Blossom wins 🌸";
+    render(result);
+  }
+  return true;
+}
+
+function showError(msg) { errorEl.textContent = msg; errorEl.style.display = "block"; }
+function hideError() { errorEl.style.display = "none"; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HUMAN MOVE
+// ═══════════════════════════════════════════════════════════════════════════
+function humanMove(i) {
+  if (locked || gameOver || board[i] !== "") return;
+  board[i] = HUMAN;
+  render();
+  if (endIfFinished()) return;
+  blossomTurn();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BLOSSOM'S TURN — the LLM chooses the move (with a validate + retry loop)
+// ═══════════════════════════════════════════════════════════════════════════
+async function blossomTurn() {
+  locked = true;
+  hideError();
+  statusEl.textContent = "🌸 Blossom is thinking…";
+  thinkingEl.style.display = "flex";
+  render();
+
+  const empties = board.map((v, i) => v === "" ? i + 1 : null).filter(x => x !== null);
+
+  const baseMessages = [
+    { role: "system", content: MOVE_PROMPT },
+    { role: "user",   content: describeBoard(empties) }
+  ];
+  let messages = baseMessages.slice();
+  let parsed = null, chosen = null;
+
+  // Up to 3 tries: if the model gives a bad move, tell it why and ask again.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let data;
+    try {
+      data = await callLLM(messages, 0.3, 250);   // low temp = steadier moves
+    } catch (e) {
+      thinkingEl.style.display = "none";
+      return failTurn("Couldn't reach Blossom (server or network). Tap to retry. 🌐");
+    }
+
+    const raw = data?.choices?.[0]?.message?.content ?? "";
+    parsed = parseMoveJSON(raw);
+
+    if (parsed && empties.includes(parsed.move)) { chosen = parsed.move; break; }
+
+    // Bad answer → append the correction and loop.
+    messages = baseMessages.concat([
+      { role: "assistant", content: raw },
+      { role: "user", content:
+        `Invalid. Reply with JSON {"reasoning","move","trash_talk"} where "move" is exactly one of these EMPTY squares: ${empties.join(", ")}. Try again.` }
+    ]);
+  }
+
+  thinkingEl.style.display = "none";
+
+  if (chosen === null) {
+    return failTurn("Blossom couldn't settle on a legal move. Tap to let her try again. 🌸");
+  }
+
+  // Place the LLM's chosen move.
+  board[chosen - 1] = AI;
+  speechEl.textContent = parsed.trash_talk || "…";
+  reasoningEl.textContent = parsed.reasoning ? ("🧠 " + parsed.reasoning) : "";
+  render();
+
+  if (endIfFinished()) return;
+  locked = false;
+  statusEl.textContent = "Your turn — tap a square 🐸";
+  render();
+}
+
+// When the LLM genuinely can't deliver — we stay honest, no fake move.
+function failTurn(msg) {
+  showError(msg);
+  retryBtn.style.display = "inline-block";
+  locked = true;       // board stays locked; the retry button drives the next attempt
+  render();
+}
+
+// Describe the board in a clear, compact way for the model.
+function describeBoard(empties) {
+  const s = board.map((v, i) => `${i + 1}:${v === HUMAN ? "X" : v === AI ? "O" : "-"}`);
+  const layout = `${s[0]} ${s[1]} ${s[2]}\n${s[3]} ${s[4]} ${s[5]}\n${s[6]} ${s[7]} ${s[8]}`;
+  return `Current board (X = human, O = you):\n${layout}\nEmpty squares: ${empties.join(", ")}.\nChoose O's best move now. JSON only.`;
+}
+
+// Call our proxy, which forwards to Groq with our temperature/token settings.
+async function callLLM(messages, temperature, max_tokens) {
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, temperature, max_tokens })
+  });
+  if (!res.ok) throw new Error("status " + res.status);
+  return res.json();
+}
+
+// Pull the JSON object out of the model's reply, tolerating fences/extra text.
+function parseMoveJSON(raw) {
+  if (!raw) return null;
+  const cleaned = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const obj = JSON.parse(match[0]);
+    const mv = parseInt(obj.move, 10);
+    if (!(mv >= 1 && mv <= 9)) return null;
+    return { move: mv, trash_talk: obj.trash_talk, reasoning: obj.reasoning };
+  } catch (e) {
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NEW GAME
+// ═══════════════════════════════════════════════════════════════════════════
+function newGame() {
+  board = Array(9).fill("");
+  locked = false;
+  gameOver = false;
+  hideError();
+  retryBtn.style.display = "none";
+  speechEl.textContent = "Make your move, frog. I'm three steps ahead already.";
+  reasoningEl.textContent = "";
+  statusEl.textContent = "Your turn — tap a square 🐸";
+  render();
+}
+
+newGame();
+</script>
 </body>
 </html>
