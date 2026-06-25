@@ -1,0 +1,348 @@
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  🐸  Froggy Tic-Tac-Toe — PUBLIC version (you vs a CLOUD AI)
+  ═══════════════════════════════════════════════════════════════════════════
+
+  This is the shareable version. Unlike the local one, the AI does NOT live on
+  your computer — it lives in the cloud (Groq), reachable by anyone.
+
+  HOW IT TALKS TO THE AI:
+    Browser (this page)  →  /api/move  →  Groq cloud model  →  back
+    The page calls /api/move, which is YOUR backend proxy (api/move.js) on the
+    same website. The proxy holds the secret key and talks to Groq.
+
+  NOTICE: there is NO API key anywhere in this file. There must never be — a web
+  page is readable by anyone. The key lives only on the server (Vercel env var).
+
+  DEPLOY: put this file (index.html) at the root and api/move.js in an /api
+  folder, push to GitHub, import into Vercel, and set the GROQ_API_KEY secret.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Froggy Tic-Tac-Toe vs AI</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    background: #e8f4f8;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; margin: 0; padding: 24px 12px;
+  }
+  .card {
+    background: #bfe3f0;
+    width: 380px; max-width: 100%;
+    padding: 26px 22px 22px;
+    border-radius: 28px;
+    box-shadow: 0 10px 30px rgba(95,122,85,0.25);
+    text-align: center;
+  }
+  .title { font-size: 21px; font-weight: 800; color: #5f7a55; margin-bottom: 2px; }
+  .subtitle { font-size: 13px; color: #7a9a6f; margin-bottom: 16px; }
+  #status {
+    font-size: 17px; color: #5f7a55; font-weight: 600;
+    min-height: 26px; margin-bottom: 14px;
+  }
+  #grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 10px; margin-bottom: 4px;
+  }
+  .cell {
+    aspect-ratio: 1 / 1;
+    background: #fdf9f1; border: none; border-radius: 22px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 46px; cursor: pointer;
+    box-shadow: 0 4px 8px rgba(95,122,85,0.18);
+    transition: transform .12s, box-shadow .2s, opacity .2s;
+  }
+  .cell:not(:disabled):hover { transform: scale(1.06); }
+  .cell:disabled { cursor: default; }
+  .cell:focus-visible { outline: 3px solid #5f7a55; outline-offset: 2px; }
+  .cell.frog   { background: #cdeccb; }
+  .cell.flower { background: #f7c8d8; }
+  .cell.win    { box-shadow: 0 0 0 4px #9fd17f; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.18)} }
+  #thinking {
+    height: 24px; margin: 10px 0 2px;
+    font-size: 14px; color: #5f7a55; font-weight: 600;
+    display: none; align-items: center; justify-content: center; gap: 8px;
+  }
+  #thinking .dot { display:inline-block; animation: pulse 1.2s ease-in-out infinite; }
+  .controls { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+  button.action {
+    padding: 11px 22px; font-size: 15px; font-weight: 700;
+    color: #fff; background: #9fd17f; border: none; border-radius: 16px;
+    cursor: pointer; box-shadow: 0 4px 0 #7fb85f;
+  }
+  button.action:active { transform: translateY(2px); box-shadow: 0 2px 0 #7fb85f; }
+  .reply-box {
+    margin-top: 18px; background: #fdf9f1; border-radius: 16px;
+    padding: 12px 14px; text-align: left; width: 380px; max-width: 100%;
+  }
+  .reply-box .label { font-size: 12px; font-weight: 700; color: #7a9a6f; margin-bottom: 6px; }
+  #modelReply {
+    font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+    font-size: 13px; color: #3d5c33; white-space: pre-wrap; word-break: break-word;
+    min-height: 20px; line-height: 1.45;
+  }
+  #note { font-size: 12px; color: #c0612b; margin-top: 8px; min-height: 16px; }
+  .endpoint { font-size: 11px; color: #8aa0b0; margin-top: 14px; text-align: center; }
+  @media (prefers-reduced-motion: reduce) {
+    .cell, button.action, #thinking .dot { transition: none; animation: none; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="title">🐸 Froggy Tic-Tac-Toe</div>
+    <div class="subtitle">You 🐸 &nbsp;vs&nbsp; a cloud AI 🌸</div>
+
+    <div id="status">Your turn — tap a square 🐸</div>
+
+    <div id="grid"></div>
+
+    <div id="thinking"><span class="dot">🌸</span> the AI is thinking…</div>
+
+    <div class="controls">
+      <button class="action" id="retryBtn" style="display:none; background:#7fb0d1; box-shadow:0 4px 0 #5f90b1;">Let the AI try again 🔁</button>
+      <button class="action" id="newGameBtn">New Game 🍃</button>
+    </div>
+  </div>
+
+  <div class="reply-box">
+    <div class="label">🌸 AI's last reply (raw)</div>
+    <div id="modelReply">— no move yet —</div>
+    <div id="note"></div>
+  </div>
+
+  <div class="endpoint" id="endpointLabel"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+//  SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════
+// We call OUR OWN backend, on the same website. No model URL, no key here —
+// the proxy (api/move.js) handles all of that on the server.
+const ENDPOINT    = "/api/move";
+const MODEL_LABEL = "Llama 3.3 70B · via Groq (cloud)";
+
+// The rules we hand the model every turn (same prompt engineering as before).
+const SYSTEM_PROMPT =
+  "You are an expert tic-tac-toe engine. The game is tic-tac-toe (noughts and " +
+  "crosses) on a 3x3 grid — NOT checkers, chess, or any other game. Squares are " +
+  "numbered 1-9: top row 1,2,3; middle row 4,5,6; bottom row 7,8,9. You play O. " +
+  "The human plays X. You will be told which squares hold X, which hold O, and " +
+  "which are empty. Choose exactly ONE empty square for your O — try to win, and " +
+  "block the human from winning. Reply with EXACTLY this format and nothing else: " +
+  "MOVE: <digit>  where <digit> is one number 1-9. Example: MOVE: 6. No explanation.";
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GAME STATE
+// ═══════════════════════════════════════════════════════════════════════════
+const HUMAN = "🐸";
+const AI    = "🌸";
+const WIN_LINES = [
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6]
+];
+
+let board = Array(9).fill("");
+let locked = false;
+let gameOver = false;
+
+// ── DOM references ──────────────────────────────────────────────────────────
+const grid       = document.getElementById("grid");
+const statusEl    = document.getElementById("status");
+const thinkingEl  = document.getElementById("thinking");
+const modelReply  = document.getElementById("modelReply");
+const noteEl      = document.getElementById("note");
+const retryBtn    = document.getElementById("retryBtn");
+document.getElementById("endpointLabel").textContent = MODEL_LABEL;
+document.getElementById("newGameBtn").onclick = newGame;
+retryBtn.onclick = aiTurn;
+
+// ── Build the 9 cells ─────────────────────────────────────────────────────────
+const cells = [];
+for (let i = 0; i < 9; i++) {
+  const b = document.createElement("button");
+  b.className = "cell";
+  b.setAttribute("aria-label", "square " + (i + 1));
+  b.onclick = () => humanMove(i);
+  cells.push(b);
+  grid.appendChild(b);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RENDER
+// ═══════════════════════════════════════════════════════════════════════════
+function render(winLine) {
+  board.forEach((val, i) => {
+    const c = cells[i];
+    c.textContent = val;
+    c.classList.toggle("frog",   val === HUMAN);
+    c.classList.toggle("flower", val === AI);
+    c.classList.remove("win");
+    c.disabled = (val !== "") || locked || gameOver;
+  });
+  if (winLine) winLine.forEach(i => cells[i].classList.add("win"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  WIN / DRAW CHECK
+// ═══════════════════════════════════════════════════════════════════════════
+function checkResult() {
+  for (const line of WIN_LINES) {
+    const [a, b, c] = line;
+    if (board[a] && board[a] === board[b] && board[a] === board[c]) return line;
+  }
+  return board.every(Boolean) ? "draw" : null;
+}
+
+function endIfFinished() {
+  const result = checkResult();
+  if (!result) return false;
+  gameOver = true;
+  if (result === "draw") {
+    statusEl.textContent = "It's a tie! 🪷";
+    render();
+  } else {
+    const winner = board[result[0]];
+    statusEl.textContent = winner === HUMAN ? "You win! 🎉🐸" : "The AI wins! 🌸";
+    render(result);
+  }
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HUMAN MOVE
+// ═══════════════════════════════════════════════════════════════════════════
+function humanMove(i) {
+  if (locked || gameOver || board[i] !== "") return;
+  board[i] = HUMAN;
+  render();
+  if (endIfFinished()) return;
+  aiTurn();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  AI MOVE — calls our proxy, which calls the cloud model
+// ═══════════════════════════════════════════════════════════════════════════
+async function aiTurn() {
+  locked = true;
+  retryBtn.style.display = "none";
+  noteEl.textContent = "";
+  statusEl.textContent = "🌸 the AI is choosing…";
+  thinkingEl.style.display = "flex";
+  render();
+
+  const outcome = await tryGetModelMove();
+  thinkingEl.style.display = "none";
+
+  if (outcome.moveIdx !== null) {
+    board[outcome.moveIdx] = AI;
+    locked = false;
+    noteEl.textContent = "";
+    render();
+    if (endIfFinished()) return;
+    statusEl.textContent = "Your turn — tap a square 🐸";
+    return;
+  }
+
+  render();
+  if (outcome.error) {
+    statusEl.textContent = "🌸 can't reach the AI";
+    noteEl.textContent = "Couldn't reach the backend. The site may still be starting up, or the " +
+      "free model quota is busy. Press the blue button to try again.";
+  } else {
+    statusEl.textContent = "🌸 couldn't pick a legal move";
+    noteEl.textContent = "The AI gave illegal or garbled answers several times in a row " +
+      "(see its replies above). Press the blue button to let it try again, or start a New Game.";
+  }
+  retryBtn.style.display = "inline-block";
+}
+
+// Ask our proxy for a move, retrying a few times if it returns garbage.
+async function tryGetModelMove() {
+  const MAX_TRIES = 3;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    let reply;
+    try {
+      reply = await askModel();
+    } catch (err) {
+      modelReply.textContent = "⚠️ " + err.message;
+      return { moveIdx: null, error: true };
+    }
+    modelReply.textContent = reply.trim() || "(the AI returned nothing)";
+    const moveIdx = parseMove(reply);
+    if (moveIdx !== null) return { moveIdx, error: false };
+    noteEl.textContent = `Attempt ${attempt} of ${MAX_TRIES}: no legal move yet. Trying again…`;
+  }
+  return { moveIdx: null, error: false };
+}
+
+// Send the conversation to our proxy (NOT to the model directly — no key here).
+async function askModel() {
+  const taken = [];
+  const empties = [];
+  board.forEach((v, i) => {
+    const sq = i + 1;
+    if (v === HUMAN)      taken.push(`square ${sq}=X`);
+    else if (v === AI)    taken.push(`square ${sq}=O`);
+    else                  empties.push(sq);
+  });
+
+  const userMessage =
+    `Board so far: ${taken.length ? taken.join(", ") : "completely empty"}. ` +
+    `Empty squares you may choose from: ${empties.join(", ")}. ` +
+    `You are O. Pick ONE empty square and reply only as: MOVE: <digit>.`;
+
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user",   content: userMessage }
+      ]
+    })
+  });
+
+  if (!res.ok) throw new Error("Server replied with status " + res.status);
+  const data = await res.json();
+  // Groq returns OpenAI-style JSON, so the reply is in the same place as before.
+  return data?.choices?.[0]?.message?.content ?? "";
+}
+
+// Pull the first LEGAL move out of whatever the AI said.
+function parseMove(reply) {
+  const digits = reply.match(/[1-9]/g) || [];
+  for (const d of digits) {
+    const idx = Number(d) - 1;
+    if (board[idx] === "") return idx;
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  NEW GAME
+// ═══════════════════════════════════════════════════════════════════════════
+function newGame() {
+  board = Array(9).fill("");
+  locked = false;
+  gameOver = false;
+  retryBtn.style.display = "none";
+  modelReply.textContent = "— no move yet —";
+  noteEl.textContent = "";
+  statusEl.textContent = "Your turn — tap a square 🐸";
+  render();
+}
+
+newGame();
+</script>
+</body>
+</html>
