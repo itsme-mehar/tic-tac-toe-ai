@@ -1,366 +1,147 @@
-<!--
-  ═══════════════════════════════════════════════════════════════════════════
-  🐸  Froggy Tic-Tac-Toe — HYBRID (unbeatable minimax + LLM trash-talk)
-  ═══════════════════════════════════════════════════════════════════════════
-
-  HOW THE "AI" WORKS NOW — two jobs, two tools:
-    • THE MOVE  → minimax, an exact algorithm that runs in YOUR browser.
-                  It plays perfectly and cannot lose. No network needed.
-    • THE VOICE → the cloud LLM (via /api/move). It does NOT decide moves
-                  anymore — it just writes a witty one-line comment as the
-                  character "Blossom 🌸". Pure flavor.
-
-  KEY PROPERTY: because the move comes from minimax (local), the game still
-  plays perfectly even if the LLM/server is unreachable — you just get a
-  canned line instead of a generated one.
-
-  Still deployed the same way: index.html at the root, api/move.js in /api.
-  ═══════════════════════════════════════════════════════════════════════════
--->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Froggy Tic-Tac-Toe vs Blossom</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Froggy Tic-Tac-Toe (Flask)</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@600;700;800&display=swap');
+
+  :root {
+    --sky:#bfe4f1; --sky-top:#d4eef7; --frog:#97c97f; --frog-deep:#6fa85e;
+    --blush:#f6bcc8; --blush-deep:#ec96a9; --cream:#fffdf6; --ink:#51624f; --ink-soft:#7e8c7c;
+  }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    font-family: -apple-system, 'Segoe UI', sans-serif;
-    background: #e8f4f8;
-    display: flex; flex-direction: column; align-items: center;
-    min-height: 100vh; margin: 0; padding: 24px 12px;
+    margin: 0; font-family: 'Nunito', system-ui, sans-serif; color: var(--ink);
+    display: flex; align-items: center; justify-content: center; padding: 28px 16px;
+    background-color: #eef4ee;
+    background-image:
+      linear-gradient(45deg, #e4ece2 25%, transparent 25%, transparent 75%, #e4ece2 75%),
+      linear-gradient(45deg, #e4ece2 25%, transparent 25%, transparent 75%, #e4ece2 75%);
+    background-size: 38px 38px; background-position: 0 0, 19px 19px;
   }
-  .card {
-    background: #bfe3f0;
-    width: 380px; max-width: 100%;
-    padding: 26px 22px 22px;
-    border-radius: 28px;
-    box-shadow: 0 10px 30px rgba(95,122,85,0.25);
-    text-align: center;
+  .widget {
+    width: 100%; max-width: 360px; position: relative;
+    background: linear-gradient(170deg, var(--sky-top), var(--sky));
+    border-radius: 36px; padding: 22px 22px 26px;
+    box-shadow: 0 18px 40px rgba(95,130,120,0.28), inset 0 0 0 5px rgba(255,255,255,0.55);
   }
-  .title { font-size: 21px; font-weight: 800; color: #5f7a55; margin-bottom: 2px; }
-  .subtitle { font-size: 13px; color: #7a9a6f; margin-bottom: 16px; }
-  #status {
-    font-size: 17px; color: #5f7a55; font-weight: 600;
-    min-height: 26px; margin-bottom: 14px;
+  .scene { display: flex; justify-content: center; }
+  .scene svg { width: 118px; height: auto; animation: bob 3.6s ease-in-out infinite; transform-origin: bottom center; }
+  @keyframes bob { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-5px);} }
+
+  h1 {
+    font-family: 'Baloo 2','Comic Sans MS',system-ui,cursive; font-weight: 700;
+    font-size: 1.7rem; text-align: center; margin: 4px 0 0; color: var(--ink); letter-spacing: .5px;
   }
-  #grid {
-    display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: 10px; margin-bottom: 4px;
+  .badge-wrap { text-align: center; margin: 2px 0; }
+  .pybadge {
+    display: inline-block; background: rgba(255,255,255,.65); color: var(--frog-deep);
+    font-weight: 800; font-size: .72rem; letter-spacing: .4px; padding: 3px 11px; border-radius: 999px;
   }
-  .cell {
-    aspect-ratio: 1 / 1;
-    background: #fdf9f1; border: none; border-radius: 22px;
+
+  .players { display: flex; justify-content: center; gap: 10px; margin: 8px 0 4px; }
+  .chip {
+    display: flex; align-items: center; gap: 7px; background: rgba(255,255,255,.6);
+    border-radius: 999px; padding: 6px 14px 6px 10px; font-weight: 800; font-size: .95rem; color: var(--ink-soft);
+  }
+  .chip .mark { font-size: 1.25rem; line-height: 1; }
+  .chip .score { min-width: 1.2em; text-align: center; background: rgba(255,255,255,.8); border-radius: 999px; padding: 1px 8px; }
+  .chip.active { background: #fff; color: var(--ink); transform: translateY(-2px) scale(1.04); box-shadow: 0 6px 14px rgba(95,130,120,.22); }
+
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0 6px; }
+  .cellform { display: contents; }   /* lets the button sit directly in the grid */
+  .tile {
+    aspect-ratio: 1 / 1; width: 100%; border: none; border-radius: 20px; background: var(--cream);
+    box-shadow: 0 5px 12px rgba(95,130,120,.16), inset 0 -3px 0 rgba(0,0,0,.04);
+    font-size: 2.5rem; line-height: 1; cursor: pointer; font-family: 'Nunito', sans-serif;
     display: flex; align-items: center; justify-content: center;
-    font-size: 46px; cursor: pointer;
-    box-shadow: 0 4px 8px rgba(95,122,85,0.18);
-    transition: transform .12s, box-shadow .2s, opacity .2s;
+    transition: transform .15s ease, background .2s ease;
   }
-  .cell:not(:disabled):hover { transform: scale(1.06); }
-  .cell:disabled { cursor: default; }
-  .cell:focus-visible { outline: 3px solid #5f7a55; outline-offset: 2px; }
-  .cell.frog   { background: #cdeccb; }
-  .cell.flower { background: #f7c8d8; }
-  .cell.win    { box-shadow: 0 0 0 4px #9fd17f; }
-  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.18)} }
-  #thinking {
-    height: 24px; margin: 10px 0 2px;
-    font-size: 14px; color: #5f7a55; font-weight: 600;
-    display: none; align-items: center; justify-content: center; gap: 8px;
+  button.tile:hover { transform: translateY(-3px); background: #fff; }
+  button.tile:focus-visible { outline: 3px solid var(--frog-deep); outline-offset: 2px; }
+  div.tile { cursor: default; }
+  .tile .mark { display: inline-block; }
+  .tile.win { background: var(--blush); box-shadow: 0 0 0 3px #fff, 0 8px 18px rgba(236,150,169,.5); }
+
+  .status { text-align: center; font-weight: 800; font-size: 1.05rem; min-height: 1.5em; margin: 12px 0 14px; color: var(--ink); }
+  .reset {
+    display: block; margin: 0 auto; border: none; background: var(--blush-deep); color: #fff;
+    font-family: 'Baloo 2', system-ui, sans-serif; font-weight: 600; font-size: 1rem;
+    padding: 11px 28px; border-radius: 999px; cursor: pointer; box-shadow: 0 6px 14px rgba(236,150,169,.45);
+    transition: transform .15s ease, background .2s ease;
   }
-  #thinking .dot { display:inline-block; animation: pulse 1.2s ease-in-out infinite; }
-  .controls { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
-  button.action {
-    padding: 11px 22px; font-size: 15px; font-weight: 700;
-    color: #fff; background: #9fd17f; border: none; border-radius: 16px;
-    cursor: pointer; box-shadow: 0 4px 0 #7fb85f;
-  }
-  button.action:active { transform: translateY(2px); box-shadow: 0 2px 0 #7fb85f; }
-  .speech {
-    margin-top: 18px; background: #fdf9f1; border-radius: 16px;
-    padding: 14px 16px; text-align: left; width: 380px; max-width: 100%;
-  }
-  .speech .label { font-size: 12px; font-weight: 700; color: #7a9a6f; margin-bottom: 6px; }
-  #speech {
-    font-size: 15px; color: #3d5c33; line-height: 1.45; min-height: 22px; font-style: italic;
-  }
-  .endpoint { font-size: 11px; color: #8aa0b0; margin-top: 14px; text-align: center; max-width: 380px; }
-  @media (prefers-reduced-motion: reduce) {
-    .cell, button.action, #thinking .dot { transition: none; animation: none; }
-  }
+  .reset:hover { background: #e5879b; transform: translateY(-2px); }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-
-  <div class="card">
-    <div class="title">🐸 Froggy Tic-Tac-Toe</div>
-    <div class="subtitle">You 🐸 &nbsp;vs&nbsp; Blossom 🌸 — the unbeatable one</div>
-
-    <div id="status">Your turn — tap a square 🐸</div>
-
-    <div id="grid"></div>
-
-    <div id="thinking"><span class="dot">🌸</span> Blossom is thinking of a comeback…</div>
-
-    <div class="controls">
-      <button class="action" id="newGameBtn">New Game 🍃</button>
+  <main class="widget">
+    <div class="scene" aria-hidden="true">
+      <svg viewBox="0 0 120 104" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="92" rx="46" ry="11" fill="#cbe09c"/>
+        <path d="M60 92 L60 81" stroke="#b6cf86" stroke-width="3" stroke-linecap="round"/>
+        <path d="M60 14 C 56 6, 50 6, 50 12 C 50 16, 56 17, 60 14 Z" fill="#bfe07f"/>
+        <path d="M60 14 C 64 6, 70 6, 70 12 C 70 16, 64 17, 60 14 Z" fill="#a9d36a"/>
+        <circle cx="60" cy="15" r="2.6" fill="#f2cf76"/>
+        <ellipse cx="60" cy="58" rx="40" ry="33" fill="#97c97f"/>
+        <ellipse cx="60" cy="66" rx="26" ry="20" fill="#a9d68f"/>
+        <circle cx="42" cy="34" r="15" fill="#97c97f"/>
+        <circle cx="78" cy="34" r="15" fill="#97c97f"/>
+        <circle cx="42" cy="34" r="9.5" fill="#fffdf6"/>
+        <circle cx="78" cy="34" r="9.5" fill="#fffdf6"/>
+        <circle cx="44" cy="36" r="4.4" fill="#51624f"/>
+        <circle cx="80" cy="36" r="4.4" fill="#51624f"/>
+        <circle cx="45.6" cy="34.4" r="1.5" fill="#fff"/>
+        <circle cx="81.6" cy="34.4" r="1.5" fill="#fff"/>
+        <ellipse cx="38" cy="60" rx="7" ry="5" fill="#f6bcc8"/>
+        <ellipse cx="82" cy="60" rx="7" ry="5" fill="#f6bcc8"/>
+        <path d="M50 60 Q60 70 70 60" stroke="#51624f" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+      </svg>
     </div>
-  </div>
 
-  <div class="speech">
-    <div class="label">🌸 Blossom says</div>
-    <div id="speech">Think you can beat me? Go on, frog. Make your move.</div>
-  </div>
+    <h1>Tic-Tac-Toe</h1>
+    <div class="badge-wrap"><span class="pybadge">🐍 Powered by Python · Flask</span></div>
 
-  <div class="endpoint" id="endpointLabel"></div>
+    <div class="players">
+      <div class="chip {% if g.current == FROG and not g.over %}active{% endif %}">
+        <span class="mark">🐸</span><span>Frog</span><span class="score">{{ scores[FROG] }}</span>
+      </div>
+      <div class="chip {% if g.current == BLOOM and not g.over %}active{% endif %}">
+        <span class="mark">🌸</span><span>Bloom</span><span class="score">{{ scores[BLOOM] }}</span>
+      </div>
+    </div>
 
-<script>
-// ═══════════════════════════════════════════════════════════════════════════
-//  SETTINGS
-// ═══════════════════════════════════════════════════════════════════════════
-const ENDPOINT = "/api/move";   // our proxy — used ONLY for the trash-talk now
+    <div class="board">
+      {% for i in range(9) %}
+        {% if g.cells[i] %}
+          <div class="tile {% if i in g.line %}win{% endif %}"><span class="mark">{{ g.cells[i] }}</span></div>
+        {% elif g.over %}
+          <div class="tile"></div>
+        {% else %}
+          <form class="cellform" action="{{ url_for('move', i=i) }}" method="post">
+            <button class="tile" type="submit" aria-label="Square {{ i + 1 }}"></button>
+          </form>
+        {% endif %}
+      {% endfor %}
+    </div>
 
-// Blossom's personality. The LLM no longer picks moves; it only writes a line.
-const VOICE_PROMPT =
-  "You are Blossom 🌸, the witty, slightly cocky voice of an UNBEATABLE tic-tac-toe AI " +
-  "playing a human (the frog 🐸). You always play perfectly and literally cannot lose. " +
-  "You'll be told the board and the move you just made. Reply with ONE short, playful line " +
-  "of commentary or friendly trash-talk — 18 words max, light and fun, never cruel. " +
-  "Output only the line: no quotes, no labels, no explanation.";
+    <p class="status">
+      {% if g.over and g.winner %}
+        {{ "Frog" if g.winner == FROG else "Bloom" }} wins! {{ g.winner }}
+      {% elif g.over %}
+        It's a draw 🌿
+      {% else %}
+        {{ "Frog" if g.current == FROG else "Bloom" }}'s turn {{ g.current }}
+      {% endif %}
+    </p>
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  GAME STATE
-// ═══════════════════════════════════════════════════════════════════════════
-const HUMAN = "🐸";
-const AI    = "🌸";
-const WIN_LINES = [
-  [0,1,2],[3,4,5],[6,7,8],
-  [0,3,6],[1,4,7],[2,5,8],
-  [0,4,8],[2,4,6]
-];
-
-let board = Array(9).fill("");
-let locked = false;
-let gameOver = false;
-
-// ── DOM references ──────────────────────────────────────────────────────────
-const grid       = document.getElementById("grid");
-const statusEl   = document.getElementById("status");
-const thinkingEl = document.getElementById("thinking");
-const speechEl   = document.getElementById("speech");
-document.getElementById("endpointLabel").textContent =
-  "Moves: minimax (runs in your browser, unbeatable) · Banter: Llama 3.3 70B via Groq";
-document.getElementById("newGameBtn").onclick = newGame;
-
-// ── Build the 9 cells ─────────────────────────────────────────────────────────
-const cells = [];
-for (let i = 0; i < 9; i++) {
-  const b = document.createElement("button");
-  b.className = "cell";
-  b.setAttribute("aria-label", "square " + (i + 1));
-  b.onclick = () => humanMove(i);
-  cells.push(b);
-  grid.appendChild(b);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  RENDER
-// ═══════════════════════════════════════════════════════════════════════════
-function render(winLine) {
-  board.forEach((val, i) => {
-    const c = cells[i];
-    c.textContent = val;
-    c.classList.toggle("frog",   val === HUMAN);
-    c.classList.toggle("flower", val === AI);
-    c.classList.remove("win");
-    c.disabled = (val !== "") || locked || gameOver;
-  });
-  if (winLine) winLine.forEach(i => cells[i].classList.add("win"));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  WINNER CHECKS
-// ═══════════════════════════════════════════════════════════════════════════
-// Returns the winning line (for highlighting), "draw", or null.
-function winningLine() {
-  for (const line of WIN_LINES) {
-    const [a, b, c] = line;
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) return line;
-  }
-  return board.every(Boolean) ? "draw" : null;
-}
-// Returns the winning symbol (🐸/🌸), "draw", or null. Used by minimax.
-function getWinner() {
-  for (const [a, b, c] of WIN_LINES) {
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
-  }
-  return board.every(Boolean) ? "draw" : null;
-}
-
-function endIfFinished() {
-  const result = winningLine();
-  if (!result) return false;
-  gameOver = true;
-  if (result === "draw") {
-    statusEl.textContent = "It's a tie! 🪷";
-    render();
-  } else {
-    const winner = board[result[0]];
-    statusEl.textContent = winner === HUMAN ? "You win?! 🎉🐸" : "Blossom wins 🌸";
-    render(result);
-  }
-  return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  MINIMAX — the unbeatable brain (pure algorithm, runs locally, no network)
-// ═══════════════════════════════════════════════════════════════════════════
-// It imagines every possible future of the game and scores each: a win for
-// Blossom is good (+), a win for the human is bad (-), a draw is neutral (0).
-// The "depth" term makes it prefer winning sooner and losing later.
-function minimax(depth, isBlossomTurn) {
-  const w = getWinner();
-  if (w === AI)    return 10 - depth;
-  if (w === HUMAN) return depth - 10;
-  if (w === "draw") return 0;
-
-  if (isBlossomTurn) {
-    let best = -Infinity;
-    for (let i = 0; i < 9; i++) {
-      if (board[i] === "") {
-        board[i] = AI;
-        best = Math.max(best, minimax(depth + 1, false));
-        board[i] = "";          // undo — we were only imagining
-      }
-    }
-    return best;
-  } else {
-    let best = Infinity;
-    for (let i = 0; i < 9; i++) {
-      if (board[i] === "") {
-        board[i] = HUMAN;
-        best = Math.min(best, minimax(depth + 1, true));
-        board[i] = "";
-      }
-    }
-    return best;
-  }
-}
-
-// Try every empty square, score it with minimax, pick the highest.
-function bestMove() {
-  let bestScore = -Infinity, move = -1;
-  for (let i = 0; i < 9; i++) {
-    if (board[i] === "") {
-      board[i] = AI;
-      const score = minimax(0, false);
-      board[i] = "";
-      if (score > bestScore) { bestScore = score; move = i; }
-    }
-  }
-  return move;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  HUMAN MOVE
-// ═══════════════════════════════════════════════════════════════════════════
-function humanMove(i) {
-  if (locked || gameOver || board[i] !== "") return;
-  board[i] = HUMAN;
-  render();
-  if (endIfFinished()) return;
-  blossomTurn();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  BLOSSOM'S TURN — minimax decides; the LLM only talks
-// ═══════════════════════════════════════════════════════════════════════════
-async function blossomTurn() {
-  locked = true;
-  statusEl.textContent = "🌸 Blossom is moving…";
-  render();
-
-  // 1) BRAIN: minimax picks a perfect move — instant, local, unbeatable.
-  const moveIdx = bestMove();
-  board[moveIdx] = AI;
-  render();
-  const finished = endIfFinished();
-
-  // 2) VOICE: ask the LLM for a comment. The move is already locked in, so if
-  //    this fails the game is completely unaffected — we just use a canned line.
-  thinkingEl.style.display = "flex";
-  let line;
-  try {
-    line = await getCommentary(moveIdx);
-  } catch (e) {
-    line = fallbackLine(finished);   // network/LLM down? game's fine, just less witty
-  }
-  thinkingEl.style.display = "none";
-  speechEl.textContent = line;
-
-  if (!finished) {
-    locked = false;
-    statusEl.textContent = "Your turn — tap a square 🐸";
-    render();
-  }
-}
-
-// Ask our proxy (which calls the cloud LLM) for one line of trash-talk.
-async function getCommentary(moveIdx) {
-  const sq = moveIdx + 1;
-  const w = getWinner();
-  let situation;
-  if (w === AI)        situation = `You just played square ${sq} and WON the game.`;
-  else if (w === "draw") situation = `You just played square ${sq}; the game ended in a draw.`;
-  else                 situation = `You just played square ${sq}; the game continues, human's turn next.`;
-
-  const boardText = board
-    .map((v, i) => `${i + 1}:${v === HUMAN ? "X" : v === AI ? "O" : "_"}`)
-    .join(" ");
-
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      temperature: 0.85,   // higher = wittier / more varied
-      max_tokens: 60,
-      messages: [
-        { role: "system", content: VOICE_PROMPT },
-        { role: "user",   content: `Board (X = human, O = you): ${boardText}. ${situation} Give your one-line comment.` }
-      ]
-    })
-  });
-
-  if (!res.ok) throw new Error("status " + res.status);
-  const data = await res.json();
-  const text = (data?.choices?.[0]?.message?.content ?? "").trim();
-  if (!text) throw new Error("empty reply");
-  return text;
-}
-
-// Canned lines used only if the LLM can't be reached. The game never needs these
-// to function — they just keep Blossom from going silent.
-function fallbackLine(finished) {
-  const winning = ["Too easy. 🌸", "Was there ever any doubt?", "GG. Try again, frog. 🐸"];
-  const playing = ["Your move, frog. 🐸", "Bold. Predictable, but bold.", "I'm barely trying."];
-  const pool = finished ? winning : playing;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  NEW GAME
-// ═══════════════════════════════════════════════════════════════════════════
-function newGame() {
-  board = Array(9).fill("");
-  locked = false;
-  gameOver = false;
-  speechEl.textContent = "Think you can beat me? Go on, frog. Make your move.";
-  statusEl.textContent = "Your turn — tap a square 🐸";
-  render();
-}
-
-newGame();
-</script>
+    <form action="{{ url_for('reset') }}" method="post">
+      <button class="reset" type="submit">New round</button>
+    </form>
+  </main>
 </body>
 </html>
